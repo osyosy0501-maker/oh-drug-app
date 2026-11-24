@@ -15,8 +15,9 @@ if 'current_rates' not in st.session_state:
 if 'show_result' not in st.session_state:
     st.session_state['show_result'] = False
 
-if 'drug_name_input' not in st.session_state:
-    st.session_state['drug_name_input'] = ""
+# 입력창을 안전하게 초기화하기 위한 카운터 변수
+if 'reset_count' not in st.session_state:
+    st.session_state['reset_count'] = 0
 
 
 # ---------------------------------------------------------
@@ -25,20 +26,7 @@ if 'drug_name_input' not in st.session_state:
 def reset_current_experiment():
     st.session_state['current_rates'] = []
     st.session_state['show_result'] = False
-    st.session_state['drug_name_input'] = ""
-
-
-def save_and_reset_experiment(drug_name, time_interval, times, rates, finish_time):
-    experiment_record = {
-        "id": len(st.session_state.get('saved_experiments', [])) + 1,
-        "drug_name": drug_name,
-        "interval": time_interval,
-        "times": list(times),
-        "rates": list(rates),
-        "finish_time": finish_time
-    }
-    st.session_state['saved_experiments'].append(experiment_record)
-    reset_current_experiment()
+    st.session_state['reset_count'] += 1
 
 
 def create_chart_data(times, rates, col_name="용출률(%)"):
@@ -111,22 +99,32 @@ with tab1:
     with head_col1:
         st.subheader("1. 실험 기본 설정")
     with head_col2:
-        st.button("🔄 새 실험 쓰기 (초기화)", on_click=reset_current_experiment, use_container_width=True)
+        if st.button("🔄 새 실험 쓰기 (초기화)", use_container_width=True):
+            reset_current_experiment()
+            st.rerun()
 
+    rc = st.session_state['reset_count']
     col1, col2 = st.columns(2)
     with col1:
         drug_name = st.text_input(
             "약물 종류 (이름)를 입력하세요", 
             placeholder="예: 아세트아미노펜 500mg",
-            key="drug_name_input"
+            key=f"drug_name_{rc}"
         )
     with col2:
-        time_interval = st.number_input("기록할 시간 단위 (10분 ~ 100분)", min_value=10, max_value=100, value=10, step=5)
+        time_interval = st.number_input(
+            "기록할 시간 단위 (10분 ~ 100분)", 
+            min_value=10, 
+            max_value=100, 
+            value=10, 
+            step=5,
+            key=f"interval_{rc}"
+        )
 
     st.divider()
     st.subheader("2. 시간 단위별 용출률(%) 입력")
     
-    rates = st.session_state.get('current_rates', [])
+    rates = st.session_state['current_rates']
     current_step = len(rates) + 1
     current_time = current_step * time_interval
 
@@ -140,7 +138,7 @@ with tab1:
                 min_value=0.0, 
                 max_value=100.0, 
                 step=1.0, 
-                key=f"rate_input_{current_step}"
+                key=f"rate_input_{rc}_{current_step}"
             )
         with input_col2:
             st.write("")
@@ -167,7 +165,7 @@ with tab1:
         else:
             st.session_state['show_result'] = True
 
-    if st.session_state.get('show_result', False) and rates and rates[-1] == 100.0:
+    if st.session_state['show_result'] and rates and rates[-1] == 100.0:
         st.markdown("---")
         st.header(f"📌 {drug_name} 용출 실험")
         
@@ -189,7 +187,7 @@ with tab1:
         with btn_col1:
             if st.button("💾 실험데이터저장", type="secondary", use_container_width=True):
                 experiment_record = {
-                    "id": len(st.session_state.get('saved_experiments', [])) + 1,
+                    "id": len(st.session_state['saved_experiments']) + 1,
                     "drug_name": drug_name,
                     "interval": time_interval,
                     "times": list(times),
@@ -200,18 +198,23 @@ with tab1:
                 st.toast(f"'{drug_name}' 실험 데이터가 저장소에 저장되었습니다!", icon="✅")
                 
         with btn_col2:
-            st.button(
-                "💾 저장하고 새 실험 쓰기", 
-                type="primary", 
-                use_container_width=True,
-                on_click=save_and_reset_experiment,
-                args=(drug_name, time_interval, times, rates, finish_time)
-            )
+            if st.button("💾 저장하고 새 실험 쓰기", type="primary", use_container_width=True):
+                experiment_record = {
+                    "id": len(st.session_state['saved_experiments']) + 1,
+                    "drug_name": drug_name,
+                    "interval": time_interval,
+                    "times": list(times),
+                    "rates": list(rates),
+                    "finish_time": finish_time
+                }
+                st.session_state['saved_experiments'].append(experiment_record)
+                reset_current_experiment()
+                st.rerun()
 
 with tab2:
     st.subheader("🗄️ 저장된 실험 데이터 목록")
     
-    saved_list = st.session_state.get('saved_experiments', [])
+    saved_list = st.session_state['saved_experiments']
     
     if not saved_list:
         st.info("아직 저장된 실험 데이터가 없습니다. 첫 번째 탭에서 실험을 완료하고 저장해주세요.")
@@ -219,4 +222,37 @@ with tab2:
         st.write(f"총 **{len(saved_list)}개**의 실험 데이터가 저장되어 있습니다.")
         
         options = []
-        for exp in saved
+        for exp in saved_list:
+            label = f"[실험 #{exp['id']}] {exp['drug_name']} (단위: {exp['interval']}분 / 완료: {exp['finish_time']}분)"
+            options.append(label)
+            
+        selected_labels = st.multiselect(
+            "비교 및 평균을 계산할 실험들을 선택하세요:",
+            options=options
+        )
+        
+        if selected_labels:
+            selected_experiments = []
+            for label in selected_labels:
+                idx = options.index(label)
+                selected_experiments.append(saved_list[idx])
+                
+            st.divider()
+            st.header(f"📈 선택된 {len(selected_experiments)}개 실험 통합 분석 결과")
+            
+            avg_finish, common_times, avg_rates, common_interval = calculate_averages(selected_experiments)
+            
+            intervals = {exp['interval'] for exp in selected_experiments}
+            if len(intervals) > 1:
+                st.info(f"💡 선택한 실험들의 기록 시간 단위가 서로 달라, 공통 간격(**{common_interval}분** 단위)으로 환산하여 평균을 계산했습니다.")
+            
+            avg_chart_data = create_chart_data(common_times, avg_rates, "평균 용출률(%)")
+            st.line_chart(avg_chart_data, x="시간(분)", y="평균 용출률(%)")
+            
+            st.success(f"⏱️ 선택된 실험들의 100% 용출까지 **평균 {avg_finish}분**이 걸렸습니다.")
+            
+            st.write(f"📊 **{common_interval}분 단위별 평균 용출률:**")
+            for i in range(len(common_times)):
+                st.write(f"- **{common_times[i]}분**: 평균 **{avg_rates[i]}%** 용출")
+
+# [끝] 코드 복사 완료 확인용 주석
